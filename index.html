@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="et">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Garantiiülevaatus – prototüüp v2</title>
+<style>
+*{box-sizing:border-box} body{font-family:Arial,sans-serif;margin:0;background:#f3f4f6;color:#222}
+header{background:#17365d;color:#fff;padding:16px;position:sticky;top:0;z-index:5}
+main{max-width:760px;margin:auto;padding:14px}.card{background:#fff;border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 1px 5px #bbb}
+label{display:block;font-weight:bold;margin:12px 0 6px}
+input,textarea,select,button{font:inherit;width:100%}
+input,textarea,select{padding:11px;border:1px solid #aaa;border-radius:8px;background:#fff}
+textarea{min-height:110px;resize:vertical}
+button{padding:12px;border:0;border-radius:8px;background:#17365d;color:#fff;margin-top:10px;font-weight:bold;cursor:pointer}
+button.secondary{background:#777}.row{display:flex;gap:8px}.row>*{flex:1}
+.small{font-size:13px;color:#666}.photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.photo{width:31%;min-width:100px}.photo img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:7px;border:1px solid #aaa}
+.item{border-top:1px solid #ddd;padding:12px 0}.num{font-weight:bold;color:#17365d}
+.badge{display:inline-block;background:#eee;border-radius:15px;padding:4px 8px;font-size:12px;margin-top:5px}
+#status{margin-top:10px;font-weight:bold}
+.custom{display:none}.custom.show{display:block}
+
+.annotateOverlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:9999;display:none;align-items:center;justify-content:center;padding:12px}
+.annotateBox{background:#fff;border-radius:14px;max-width:980px;width:100%;max-height:96vh;display:flex;flex-direction:column;overflow:hidden}
+.annotateTop{padding:10px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #ddd;font-weight:700}
+.annotateCanvasWrap{background:#222;display:flex;align-items:center;justify-content:center;flex:1;min-height:45vh;overflow:auto;touch-action:none}
+#annotateCanvas{max-width:100%;max-height:72vh;touch-action:none;display:block}
+.annotateBottom{padding:10px 14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-top:1px solid #ddd}
+.annotateBottom button{padding:9px 13px;border:1px solid #bbb;border-radius:8px;background:#fff}
+.annotateBottom .primary{background:#b40000;color:#fff;border-color:#b40000}
+.annotatedBadge{display:inline-block;margin-top:4px;font-size:11px;color:#176b35}
+</style>
+</head>
+<body>
+<header><b>GARANTIIÜLEVAATUS</b><div style="font-size:13px;color:#ddd">Puuduse + fotode sidumise prototüüp v2</div></header>
+<main>
+<div class="card">
+<label>Objekt</label>
+<input id="project" value="Uusmäe tn 10">
+
+<label>Ala</label>
+<input id="section" placeholder="nt 4.1 Välisalad, 4.14 Tehnoruumid">
+<div class="small">Kirjuta ala ise. Näiteks: <b>4.1 Välisalad</b> või <b>4.14 Tehnoruumid</b>.</div>
+
+<label>Asukoha täpsustus</label>
+<input id="location" placeholder="nt peaukse ees, trepikoja 2. korrus">
+
+<label>Probleemi kirjeldus</label>
+<textarea id="desc" placeholder="Kirjuta või kasuta telefoni klaviatuuri mikrofoni..."></textarea>
+<button type="button" onclick="voice()">🎤 Dikteeri kirjeldus</button>
+
+<label>Fotod</label>
+<input id="photos" type="file" accept="image/*" capture="environment" multiple onchange="preparePhotos()">
+<div id="preview" class="photos"></div>
+
+<button type="button" onclick="saveDefect()">SALVESTA PUUDUS</button>
+<div id="status"></div>
+</div>
+
+<div class="card">
+<b>Salvestatud puudused</b>
+<div id="list"></div>
+<button type="button" class="secondary" onclick="exportWord()">EKSPORDI WORDI</button>
+<button type="button" class="secondary" onclick="exportReport()">EKSPORDI ÜLEVAATUS (HTML + FOTOD)</button>
+<button type="button" class="secondary" onclick="downloadJSON()">EKSPORDI ANDMED (JSON)</button>
+<button type="button" class="secondary" onclick="clearAll()">KUSTUTA KÕIK</button>
+</div>
+</main>
+
+<script>
+const KEY='garantii_v2';
+const DB_NAME='garantii_ulevaatus_db';
+const DB_VERSION=1;
+let defects=[];
+let pendingPhotos=[];
+
+function openDB(){
+  return new Promise((resolve,reject)=>{
+    const r=indexedDB.open(DB_NAME,DB_VERSION);
+    r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains('defects')) r.result.createObjectStore('defects',{keyPath:'number'});};
+    r.onsuccess=()=>resolve(r.result);
+    r.onerror=()=>reject(r.error||new Error('Andmebaasi avamine ebaõnnestus'));
+  });
+}
+async function loadDefects(){
+  const db=await openDB();
+  defects=await new Promise((resolve,reject)=>{
+    const r=db.transaction('defects','readonly').objectStore('defects').getAll();
+    r.onsuccess=()=>resolve(r.result||[]);
+    r.onerror=()=>reject(r.error);
+  });
+  db.close();
+  // Migrate older small localStorage data if IndexedDB is empty.
+  if(!defects.length){
+    try{
+      const old=JSON.parse(localStorage.getItem(KEY)||'[]');
+      if(old.length){
+        defects=old;
+        await saveAllToDB();
+        localStorage.removeItem(KEY);
+      }
+    }catch(e){}
+  }
+  render();
+}
+async function saveAllToDB(){
+  const db=await openDB();
+  await new Promise((resolve,reject)=>{
+    const tx=db.transaction('defects','readwrite');
+    const store=tx.objectStore('defects');
+    defects.forEach(x=>store.put(x));
+    tx.oncomplete=resolve; tx.onerror=()=>reject(tx.error);
+  });
+  db.close();
+}
+
+function status(t,ok=true){const s=document.getElementById('status');s.textContent=t;s.style.color=ok?'#176b35':'#a00';setTimeout(()=>s.textContent='',3500)}
+async function preparePhotos(){
+  const files=[...document.getElementById('photos').files];
+  pendingPhotos=[];
+  const preview=document.getElementById('preview');preview.innerHTML='';
+  if(!files.length)return;
+  status('Fotode töötlemine...');
+  for(let i=0;i<files.length;i++){
+    try{
+      const data=await compressPhoto(files[i],1800,0.78);
+      pendingPhotos[i]=data;
+      addPhotoPreview(i);
+    }catch(e){
+      console.error(e); status('Foto '+(i+1)+' töötlemine ebaõnnestus.',false);
+    }
+  }
+  status(pendingPhotos.filter(Boolean).length+' fotot valmis. Vajadusel märgi fotodel probleemid.');
+}
+function addPhotoPreview(i){
+  const preview=document.getElementById('preview');
+  const d=document.createElement('div');d.className='photo';
+  d.dataset.index=i;
+  d.innerHTML='<img src="'+pendingPhotos[i]+'"><div class="small">Foto '+(i+1)+'</div>'+
+    '<button type="button" class="secondary" onclick="openAnnotator('+i+')">Märgi foto</button>'+
+    '<span id="badge_'+i+'"></span>';
+  preview.appendChild(d);
+}
+
+function compressPhoto(file,maxSide,quality){
+  return new Promise((resolve,reject)=>{
+    const r=new FileReader();
+    r.onload=()=>{
+      const img=new Image();
+      img.onload=()=>{
+        let w=img.naturalWidth,h=img.naturalHeight;
+        const scale=Math.min(1,maxSide/Math.max(w,h));
+        w=Math.max(1,Math.round(w*scale));h=Math.max(1,Math.round(h*scale));
+        const c=document.createElement('canvas');c.width=w;c.height=h;
+        const ctx=c.getContext('2d');ctx.drawImage(img,0,0,w,h);
+        resolve(c.toDataURL('image/jpeg',quality));
+      };
+      img.onerror=reject; img.src=r.result;
+    };
+    r.onerror=reject; r.readAsDataURL(file);
+  });
+}
+
+let annotationIndex=-1;
+let annotationImg=null;
+let annotationBase=null;
+let annotationDrawing=false;
+let annotationHistory=[];
+
+function openAnnotator(index){
+  if(!pendingPhotos[index])return;
+  annotationIndex=index;
+  annotationBase=pendingPhotos[index];
+  annotationHistory=[];
+  const canvas=document.getElementById('annotateCanvas');
+  const img=new Image();
+  img.onload=()=>{
+    annotationImg=img;
+    canvas.width=img.naturalWidth; canvas.height=img.naturalHeight;
+    const ctx=canvas.getContext('2d');
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(img,0,0);
+    document.getElementById('annotateOverlay').style.display='flex';
+  };
+  img.src=annotationBase;
+}
+function canvasPoint(e){
+  const c=document.getElementById('annotateCanvas');
+  const r=c.getBoundingClientRect();
+  return {x:(e.clientX-r.left)*c.width/r.width,y:(e.clientY-r.top)*c.height/r.height};
+}
+function saveCanvasState(){
+  const c=document.getElementById('annotateCanvas');
+  annotationHistory.push(c.toDataURL('image/jpeg',0.78));
+  if(annotationHistory.length>20)annotationHistory.shift();
+}
+function startAnnotation(e){
+  e.preventDefault(); saveCanvasState();
+  annotationDrawing=true;
+  const p=canvasPoint(e),ctx=document.getElementById('annotateCanvas').getContext('2d');
+  ctx.beginPath();ctx.moveTo(p.x,p.y);
+}
+function moveAnnotation(e){
+  if(!annotationDrawing)return;e.preventDefault();
+  const p=canvasPoint(e),ctx=document.getElementById('annotateCanvas').getContext('2d');
+  const c=document.getElementById('annotateCanvas');
+  const scale=c.width/Math.max(1,c.getBoundingClientRect().width);
+  ctx.lineWidth=Math.max(6,5*scale);ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#e00000';
+  ctx.lineTo(p.x,p.y);ctx.stroke();
+}
+function endAnnotation(e){if(annotationDrawing){annotationDrawing=false;}}
+function undoAnnotation(){
+  const c=document.getElementById('annotateCanvas'),ctx=c.getContext('2d');
+  const data=annotationHistory.pop();
+  if(!data){ctx.clearRect(0,0,c.width,c.height);ctx.drawImage(annotationImg,0,0);return}
+  const img=new Image();img.onload=()=>{ctx.clearRect(0,0,c.width,c.height);ctx.drawImage(img,0,0)};img.src=data;
+}
+function clearAnnotation(){
+  const c=document.getElementById('annotateCanvas'),ctx=c.getContext('2d');
+  saveCanvasState();ctx.clearRect(0,0,c.width,c.height);ctx.drawImage(annotationImg,0,0);
+}
+function saveAnnotation(){
+  if(annotationIndex<0)return;
+  const c=document.getElementById('annotateCanvas');
+  pendingPhotos[annotationIndex]=c.toDataURL('image/jpeg',0.78);
+  const card=document.querySelector('.photo[data-index="'+annotationIndex+'"]');
+  if(card){
+    card.querySelector('img').src=pendingPhotos[annotationIndex];
+    const badge=card.querySelector('#badge_'+annotationIndex);
+    if(badge)badge.innerHTML='<span class="annotatedBadge">✓ märgitud</span>';
+  }
+  closeAnnotator();
+  status('Foto '+(annotationIndex+1)+' märgitud.');
+}
+function closeAnnotator(){
+  document.getElementById('annotateOverlay').style.display='none';
+  annotationIndex=-1;annotationImg=null;annotationBase=null;annotationHistory=[];
+}
+(function setupAnnotationCanvas(){
+  const c=document.getElementById('annotateCanvas');
+  if(!c)return;
+  c.addEventListener('pointerdown',startAnnotation);
+  c.addEventListener('pointermove',moveAnnotation);
+  c.addEventListener('pointerup',endAnnotation);
+  c.addEventListener('pointercancel',endAnnotation);
+})();
+
+function nextNo(section){
+  let max=0;
+  defects.filter(x=>x.section===section).forEach(x=>{
+    const a=parseInt(x.number.split('.').pop(),10);if(!isNaN(a)&&a>max)max=a;
+  });
+  return section+'.'+(max+1);
+}
+
+async function saveDefect(){
+  try{
+    const section=document.getElementById('section').value.trim();
+    if(!section){status('Sisesta ala.',false);document.getElementById('section').focus();return}
+    const desc=document.getElementById('desc').value.trim();
+    if(!desc){status('Lisa probleemi kirjeldus.',false);document.getElementById('desc').focus();return}
+    const photos=pendingPhotos.filter(Boolean);
+    const item={
+      number:nextNo(section),
+      project:document.getElementById('project').value.trim(),
+      section,
+      sectionName:section,
+      location:document.getElementById('location').value.trim(),
+      description:desc,
+      photos,
+      created:new Date().toISOString()
+    };
+    defects.push(item);
+    await saveAllToDB();
+    document.getElementById('desc').value='';document.getElementById('location').value='';
+    document.getElementById('photos').value='';document.getElementById('preview').innerHTML='';pendingPhotos=[];
+    render();status('Salvestatud: '+item.number+' ('+photos.length+' fotot)');
+  }catch(e){status('Salvestamine ebaõnnestus: '+e.message,false);console.error(e)}
+}
+
+function render(){
+ const l=document.getElementById('list');l.innerHTML='';
+ if(!defects.length){l.innerHTML='<div class="small" style="margin-top:10px">Veel pole puuduseid salvestatud.</div>';return}
+ defects.forEach(x=>{
+  const d=document.createElement('div');d.className='item';
+  d.innerHTML='<div class="num">'+esc(x.number)+' – '+esc(x.location||'Asukoht määramata')+'</div>'+
+   '<div>'+esc(x.description)+'</div><span class="badge">'+x.photos.length+' fotot</span>';
+  l.appendChild(d);
+ });
+}
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+function downloadFile(content, filename, type){
+  try{
+    const blob=new Blob([content],{type});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=filename; a.style.display='none';
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{URL.revokeObjectURL(url);a.remove()},1500);
+    status('Eksport käivitatud: '+filename);
+  }catch(e){
+    status('Eksport ebaõnnestus: '+e.message,false);
+  }
+}
+function downloadJSON(){
+  const data={project:document.getElementById('project').value, defects};
+  downloadFile(JSON.stringify(data,null,2),'garantiiulevaatus.json','application/json;charset=utf-8');
+}
+
+function exportWord(){
+  if(!defects.length){status('Wordi eksportimiseks pole veel puuduseid.',false);return}
+  try{
+    const project=(document.getElementById('project').value||'Garantiiülevaatus').trim();
+    let body='';
+    body += '<h1 style="font-family:Arial;font-size:20pt;">'+esc(project)+'</h1>';
+    body += '<h2 style="font-family:Arial;font-size:15pt;">Paikvaatlusel tuvastatud defektid</h2>';
+
+    let currentSection='';
+    for(const x of defects){
+      if(x.section !== currentSection){
+        currentSection=x.section;
+        body += '<h2 style="font-family:Arial;font-size:14pt;page-break-before:always;">'+
+          esc(x.sectionName || x.section)+'</h2>';
+      }
+      body += '<p style="font-family:Arial;font-size:11pt;margin-top:16pt;margin-bottom:6pt;">'+
+        '<b>'+esc(x.number)+' '+esc(x.location||'')+'</b></p>';
+      body += '<p style="font-family:Arial;font-size:11pt;">'+esc(x.description).replace(/\n/g,'<br>')+'</p>';
+
+      for(let i=0;i<x.photos.length;i++){
+        body += '<p style="text-align:center;font-family:Arial;font-size:9pt;margin-top:10pt;">'+
+          '<img src="'+x.photos[i]+'" style="max-width:680px;max-height:520px;"><br>'+
+          esc(x.number+'-'+(i+1))+'</p>';
+      }
+    }
+
+    const doc='<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>'+
+      body+'
+<div id="annotateOverlay" class="annotateOverlay">
+  <div class="annotateBox">
+    <div class="annotateTop">
+      <span>Märgi foto</span>
+      <button type="button" onclick="closeAnnotator()">✕</button>
+    </div>
+    <div class="annotateCanvasWrap">
+      <canvas id="annotateCanvas"></canvas>
+    </div>
+    <div class="annotateBottom">
+      <span class="small">Joonista sõrmega punane ring, nool või muu märge.</span>
+      <button type="button" onclick="undoAnnotation()">Võta tagasi</button>
+      <button type="button" onclick="clearAnnotation()">Puhasta</button>
+      <button type="button" class="primary" onclick="saveAnnotation()">Salvesta märgitud foto</button>
+    </div>
+  </div>
+</div>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+}
+</script>
+</body></html>';
+    const blob=new Blob([doc],{type:'application/msword'});
+    downloadBlob(blob,'garantiiulevaatus_'+safeFilename(project)+'.doc');
+    status('Wordi dokument valmis.');
+  }catch(e){
+    console.error(e);
+    status('Wordi eksport ebaõnnestus: '+e.message,false);
+  }
+}
+function esc(s){
+  return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function safeFilename(s){return s.replace(/[\\/:*?"<>|]+/g,'_').replace(/\s+/g,'_')}
+function downloadBlob(blob,filename){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=filename;a.style.display='none';
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(url);a.remove()},2000);
+}
+
+function exportReport(){
+  if(!defects.length){status('Ekspordiks pole veel puuduseid.',false);return}
+  const project=esc(document.getElementById('project').value||'Garantiiülevaatus');
+  let body='';
+  defects.forEach(x=>{
+    body += '<section><h2>'+esc(x.number)+' '+esc(x.location||'')+'</h2>';
+    body += '<p>'+esc(x.description).replace(/\n/g,'<br>')+'</p>';
+    if(x.photos.length){
+      body += '<div class="photos">';
+      x.photos.forEach((p,i)=>body += '<figure><img src="'+p+'"><figcaption>'+esc(x.number)+'-'+(i+1)+'</figcaption></figure>');
+      body += '</div>';
+    }
+    body += '</section>';
+  });
+  const report='<!doctype html><html lang="et"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'
+    +project+' – garantiiülevaatus</title><style>body{font-family:Arial,sans-serif;max-width:900px;margin:auto;padding:25px;color:#222}h1{color:#17365d}section{page-break-inside:avoid;margin:30px 0}figure{display:inline-block;width:46%;margin:1%;vertical-align:top}img{max-width:100%;max-height:520px;object-fit:contain}figcaption{font-size:12px;color:#666;margin-top:4px}@media print{figure{break-inside:avoid}}</style></head><body><h1>'
+    +project+'</h1><p>Garantiiülevaatuse puudused ja fotod</p>'+body+'</body></html>';
+  downloadFile(report,'garantiiulevaatus_eksport.html','text/html;charset=utf-8');
+}
+async function clearAll(){
+  if(!confirm('Kustutada kõik salvestatud puudused?'))return;
+  try{
+    defects=[];
+    const db=await openDB();
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('defects','readwrite');
+      tx.objectStore('defects').clear();
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+    db.close(); localStorage.removeItem(KEY);
+    render();status('Kõik kustutatud.');
+  }catch(e){status('Kustutamine ebaõnnestus: '+e.message,false)}
+}
+function voice(){
+ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!SR){status('Dikteerimiseks kasuta telefoni klaviatuuri mikrofoni.',false);return}
+ const r=new SR();r.lang='et-EE';r.interimResults=false;r.continuous=false;
+ r.onresult=e=>document.getElementById('desc').value+=(document.getElementById('desc').value?' ':'')+e.results[0][0].transcript;
+ r.onerror=()=>status('Dikteerimine ebaõnnestus. Kasuta klaviatuuri mikrofoni.',false);
+ r.start();
+}
+render();
+
+loadDefects().catch(e=>{
+  console.error(e);
+  status('Andmete avamine ebaõnnestus: '+e.message,false);
+});
+</script>
+</body>
+</html>
