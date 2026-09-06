@@ -17,7 +17,7 @@ button,input,textarea{font:inherit}button{border:1px solid #cbd3dd;border-radius
 .title{font-size:18px;font-weight:800}.sub{font-size:12px;opacity:.82;margin-top:3px}
 .wrap{max-width:850px;margin:auto;padding:16px}.card{background:#fff;border:1px solid #d5dce5;border-radius:14px;padding:14px;margin:10px 0}
 label{display:block;font-size:12px;font-weight:700;margin:11px 0 5px}input,textarea{width:100%;padding:11px;border:1px solid #cbd3dd;border-radius:9px;background:#fff}textarea{min-height:110px}
-.row{display:flex;gap:8px}.row>*{flex:1}.small{font-size:12px;color:#697586}.project{font-size:17px;font-weight:800}.meta{font-size:12px;color:#697586;margin-top:5px}
+.row{display:flex;gap:8px}.row>*{flex:1}.small{font-size:12px;color:#697586}.project{font-size:17px;font-weight:800}.meta{font-size:12px;color:#697586;margin-top:5px}.buttonlike{display:block;padding:11px 14px;border:1px solid #cbd3dd;border-radius:10px;background:#fff;text-align:center}
 .item{border:1px solid #d5dce5;border-radius:11px;padding:12px;margin:8px 0;background:#fff}.num{font-weight:800}.badge{font-size:11px;background:#edf2f7;border-radius:20px;padding:4px 8px;display:inline-block;margin-top:7px}
 .photos{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-top:10px}.photo{border:1px solid #d5dce5;border-radius:10px;padding:7px;background:#fafafa}.photo img{width:100%;display:block;border-radius:7px}.photo button{width:100%;margin-top:7px}
 .hidden{display:none!important}.sticky{position:sticky;bottom:10px;margin-top:12px;z-index:5}
@@ -35,8 +35,19 @@ label{display:block;font-size:12px;font-weight:700;margin:11px 0 5px}input,texta
 <div class="wrap">
 <div class="card">
 <label>Projekti / objekti nimi</label>
-<input id="projectInput" placeholder="nt Uusmäe 10">
+<input id="projectInput" placeholder="nt Uusmäe tn 10">
+<label>Akt nr</label>
+<input id="aktInput" placeholder="nt GA-290124">
+<label>Objekti aadress</label>
+<input id="addressInput" placeholder="nt Uusmäe tn 10, Saku alevik, Saku vald, Harju maakond">
+<label>Tellija</label>
+<input id="clientInput" placeholder="nt korteriühistu">
+<label>Ülevaatuse teostaja</label>
+<input id="inspectorInput" placeholder="nt Fronter Construction Consulting OÜ">
+<label>Ülevaatus teostatud</label>
+<input id="dateInput" placeholder="nt september 2026">
 <button id="newProjectBtn" class="primary wide" style="margin-top:9px">＋ UUS PROJEKT</button>
+<div class="small" style="margin-top:8px">Need andmed lähevad Wordi esilehele näidise vormistuses.</div>
 </div>
 <input id="projectSearch" placeholder="Otsi projekti">
 <div id="projectsList"></div>
@@ -107,7 +118,10 @@ function del(x){
  });
 }
 function showHome(){ $("home").classList.remove("hidden");$("inspection").classList.add("hidden");renderProjects() }
-function openProject(name){currentProject=name;$("currentProject").textContent=name;$("home").classList.add("hidden");$("inspection").classList.remove("hidden");renderDefects()}
+function openProject(name){
+ currentProject=name;$("currentProject").textContent=name;
+ $("home").classList.add("hidden");$("inspection").classList.remove("hidden");renderDefects()
+}
 function renderProjects(){
  var q=$("projectSearch").value.toLowerCase().trim();
  var names=[];defects.forEach(function(x){if(x.project&&names.indexOf(x.project)<0)names.push(x.project)});
@@ -124,7 +138,10 @@ function renderProjects(){
 function newProject(){
  var n=$("projectInput").value.trim();
  if(!n){alert("Sisesta projekti / objekti nimi.");$("projectInput").focus();return}
- $("projectInput").value="";openProject(n)
+ var meta={akt:$("aktInput").value.trim(),address:$("addressInput").value.trim(),client:$("clientInput").value.trim(),inspector:$("inspectorInput").value.trim(),date:$("dateInput").value.trim()};
+ localStorage.setItem("gu_meta_"+n,JSON.stringify(meta));
+ $("projectInput").value="";$("aktInput").value="";$("addressInput").value="";$("clientInput").value="";$("inspectorInput").value="";$("dateInput").value="";
+ openProject(n)
 }
 async function deleteProject(n){
  if(!confirm("Kustutada projekt ja kõik selle puudused?"))return;
@@ -140,10 +157,22 @@ function renderDefects(){
  a.forEach(function(x){out+='<div class="item"><div class="num">'+esc(x.number)+" "+esc(x.location||"")+'</div><div>'+esc(x.description)+'</div><span class="badge">'+(x.photos||[]).length+" fotot</span></div>"});
  $("defectsList").innerHTML=out||'<div class="small" style="margin-top:8px">Veel pole puuduseid.</div>';
 }
+function areaCode(area){
+ var m=String(area).trim().match(/^((?:\d+\.)*\d+)/);
+ return m?m[1]:String(area).trim();
+}
+function areaTitle(area){
+ var code=areaCode(area), rest=String(area).trim().slice(code.length).trim();
+ return {code:code,title:rest||String(area).trim()};
+}
 function nextNumber(area){
- var max=0;
- defects.forEach(function(x){if(x.project===currentProject&&x.area===area){var n=parseInt(String(x.number).split(".").pop(),10);if(n>max)max=n}});
- return area+"."+(max+1)
+ var code=areaCode(area),max=0;
+ defects.forEach(function(x){
+  if(x.project===currentProject&&areaCode(x.area)===code){
+   var n=parseInt(String(x.number).split(".").pop(),10);if(n>max)max=n
+  }
+ });
+ return code+"."+(max+1)
 }
 function compress(file){
  return new Promise(function(resolve,reject){
@@ -188,17 +217,41 @@ function undo(){var data=annHistory.pop(),c=$("canvas"),ctx=c.getContext("2d");i
 function clearAnn(){saveState();var c=$("canvas"),ctx=c.getContext("2d");ctx.clearRect(0,0,c.width,c.height);ctx.drawImage(annImage,0,0)}
 function saveAnn(){pendingPhotos[annIndex]=$("canvas").toDataURL("image/jpeg",0.78);var card=document.querySelector('.photo[data-index="'+annIndex+'"]');if(card)card.querySelector("img").src=pendingPhotos[annIndex];$("annotator").style.display="none";annIndex=-1}
 function exportWord(){
- if(!defects.filter(function(x){return x.project===currentProject}).length){alert("Pole midagi eksportida.");return}
- var a=defects.filter(function(x){return x.project===currentProject}),body="<h1>"+esc(currentProject)+"</h1><h2>Paikvaatlusel tuvastatud defektid</h2>",sec="";
+ var a=defects.filter(function(x){return x.project===currentProject});
+ if(!a.length){alert("Pole midagi eksportida.");return}
+ var meta={};try{meta=JSON.parse(localStorage.getItem("gu_meta_"+currentProject)||"{}")}catch(e){}
+ function esc2(v){return esc(v||"")}
+ function header(){
+   return '<div class="docHeader"><div>Fronter Construction Consulting OÜ</div><div>Võistluse tn 1/1-A10, 10132, Tallinn</div><div>Reg nr. 12711657</div><div>+372 528 5575</div><div>info@fronter.ee</div><div>www.fronter.ee</div><div style="margin-top:5pt">Töö nr: '+esc2(meta.akt)+'</div><div>Aadress: '+esc2(meta.address)+'</div><div style="margin-top:5pt;font-weight:bold">'+esc2(currentProject)+' garantiiprobleemide eksperthinnang</div><div>Fronter Construction Consulting OÜ</div><div>'+esc2(meta.date)+'</div></div>';
+ }
+ var groups={},order=[];
  a.forEach(function(x){
-  if(x.area!==sec){sec=x.area;body+='<h2 style="page-break-before:always">'+esc(sec)+"</h2>"}
-  body+="<p><b>"+esc(x.number)+" "+esc(x.location||"")+"</b></p><p>"+esc(x.description).replace(/\\n/g,"<br>")+"</p>";
-  (x.photos||[]).forEach(function(p,i){body+='<p style="text-align:center"><img src="'+p+'" style="max-width:680px;max-height:520px"><br>'+esc(x.number+"-"+(i+1))+"</p>"})
+   var m=String(x.section||"").match(/^((?:\d+\.)*\d+)\s*(.*)$/);
+   var c=m?m[1]:String(x.section||""),t=m?m[2]:String(x.section||"");
+   if(!groups[c]){groups[c]={title:t,items:[]};order.push(c)}groups[c].items.push(x)
  });
- var htmlDoc="<!doctype html><html><head><meta charset='utf-8'></head><body style='font-family:Arial'>"+body+"</body></html>";
- var blob=new Blob([htmlDoc],{type:"application/msword"}),url=URL.createObjectURL(blob),aEl=document.createElement("a");aEl.href=url;aEl.download=currentProject.replace(/[^a-z0-9äöõüšž -]/gi,"_")+".doc";document.body.appendChild(aEl);aEl.click();setTimeout(function(){URL.revokeObjectURL(url);aEl.remove()},1500)
+ var css='<style>@page{size:A4;margin:0}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.45;color:#000;margin:0}.page{width:210mm;min-height:297mm;padding:20mm 20mm 18mm 25mm;page-break-after:always}.page:last-child{page-break-after:auto}.docHeader{font-size:9pt;line-height:1.18;margin-bottom:18pt}.coverTitle{text-align:center;font-size:16pt;font-weight:bold;margin-top:28mm;line-height:1.3}.coverMeta{margin-top:48mm}.coverMeta table{width:100%;border-collapse:collapse}.coverMeta td{padding:3pt 0;vertical-align:top}.coverMeta td:first-child{width:38%}.toc h1{font-size:14pt;margin-bottom:16pt}.tocLine{display:flex;justify-content:space-between;margin:2pt 0}.indent{padding-left:10mm}h1{font-size:14pt;margin:0 0 14pt}h2{font-size:12pt;margin:15pt 0 8pt;page-break-after:avoid}h3{font-size:12pt;margin:8pt 0 5pt;page-break-after:avoid}p{margin:0 0 7pt}.defect{page-break-inside:avoid;margin-bottom:14pt}.photoBlock{text-align:center;margin:8pt 0 12pt;page-break-inside:avoid}.photoBlock img{max-width:160mm;max-height:112mm;width:auto;height:auto}.photoCaption{font-size:9pt;margin-top:3pt}</style>';
+ var out='<!doctype html><html><head><meta charset="utf-8">'+css+'</head><body>';
+ out+='<div class="page"><div class="coverTitle">'+esc2(currentProject).toUpperCase()+' GARANTIIAEGSETE PROBLEEMIDE EKSPERTHINNANG</div><div class="coverMeta"><table><tr><td>Akt nr:</td><td>'+esc2(meta.akt)+'</td></tr><tr><td>Objekt:</td><td>'+esc2(currentProject)+'</td></tr><tr><td>Objekti aadress:</td><td>'+esc2(meta.address)+'</td></tr><tr><td>Tellija:</td><td>'+esc2(meta.client)+'</td></tr><tr><td>Ülevaatuse teostaja:</td><td>'+esc2(meta.inspector)+'</td></tr><tr><td>Ülevaatus teostatud:</td><td>'+esc2(meta.date)+'</td></tr></table></div></div>';
+ out+='<div class="page">'+header()+'<div class="toc"><h1>1 SISUKORD</h1><div class="tocLine"><span>2 ÜLDOSA</span><span>4</span></div><div class="tocLine indent"><span>2.1 Auditi objekt:</span><span>4</span></div><div class="tocLine indent"><span>2.2 Auditi tellija:</span><span>4</span></div><div class="tocLine indent"><span>2.3 Auditi eesmärk:</span><span>4</span></div><div class="tocLine indent"><span>2.4 Auditi teostamise aeg:</span><span>4</span></div><div class="tocLine indent"><span>2.5 Auditi liik:</span><span>4</span></div><div class="tocLine indent"><span>2.6 Auditi teostaja:</span><span>4</span></div><div class="tocLine indent"><span>2.7 Paikvaatlus:</span><span>5</span></div><div class="tocLine indent"><span>2.8 Auditi koostamisel lähtutud normdokumendid:</span><span>5</span></div><div class="tocLine indent"><span>2.9 Auditi koostamiseks esitatud lähtedokumendid:</span><span>5</span></div><div class="tocLine indent"><span>2.10 Auditi koostaja kinnitus:</span><span>5</span></div><div class="tocLine"><span>3 ÜLDINFO</span><span>6</span></div><div class="tocLine indent"><span>3.1 Auditi eesmärk</span><span>6</span></div><div class="tocLine indent"><span>3.2 Auditi koostamise meetodid</span><span>6</span></div><div class="tocLine indent"><span>3.3 Ehitise tehnilised andmed</span><span>7</span></div><div class="tocLine"><span>4 PAIKVAATLUSEL TUVASTATUD DEFEKTID</span></div>';
+ order.forEach(function(c){out+='<div class="tocLine indent"><span>'+esc2(c+" "+groups[c].title)+'</span></div>'});
+ out+='<div class="tocLine"><span>5 PARANDUSTÖÖDE ÜLDNÕUDED</span></div><div class="tocLine"><span>6 KOKKUVÕTE NING HINNANG AUDITILE</span></div></div></div>';
+ out+='<div class="page">'+header()+'<h1>2 ÜLDOSA</h1><p><b>2.1 Auditi objekt:</b></p><p>'+esc2(currentProject)+'</p><p><b>2.2 Auditi tellija:</b></p><p>'+esc2(meta.client)+'</p><p><b>2.3 Auditi eesmärk:</b></p><p>Garantiiperioodil tuvastatud puuduste fikseerimine ja garantiitööde loetelu koostamine koos selgitustega.</p><p><b>2.4 Auditi teostamise aeg:</b></p><p>'+esc2(meta.date)+'</p><p><b>2.5 Auditi liik:</b></p><p>Ehitustehniline.</p><p><b>2.6 Auditi teostaja:</b></p><p>'+esc2(meta.inspector)+'</p><p><b>2.7 Paikvaatlus:</b></p><p>Paikvaatlusel fikseeritakse objekti olukord fotodega, mis seotakse vastavate puudustega.</p></div>';
+ out+='<div class="page">'+header()+'<h1>3 ÜLDINFO</h1><h2>3.1 Auditi eesmärk</h2><p>Käesoleva auditi eesmärk on esitada erapooletu eksperdi arvamus garantiiperioodi jooksul tekkinud puuduste kohta.</p><h2>3.2 Auditi koostamise meetodid</h2><p>Visuaalkontroll ning objekti seisukorra fotodokumenteerimine.</p><h2>3.3 Ehitise tehnilised andmed</h2><p>Tehnilised andmed saab raporti koostamisel lisada vastavalt objektile.</p></div>';
+ order.forEach(function(c){
+   var g=groups[c];
+   out+='<div class="page">'+header()+'<h1>4 PAIKVAATLUSEL TUVASTATUD DEFEKTID</h1><h2>'+esc2(c+" "+g.title)+'</h2>';
+   g.items.forEach(function(x){
+     out+='<div class="defect"><h3>'+esc2(x.number+(x.location?" "+x.location:""))+'</h3><p>'+esc2(x.description).replace(/\n/g,"<br>")+'</p>';
+     (x.photos||[]).forEach(function(ph,i){out+='<div class="photoBlock"><img src="'+ph+'"><div class="photoCaption">'+esc2(x.number+"-"+(i+1))+'</div></div>'});
+     out+='</div>';
+   });
+   out+='</div>';
+ });
+ out+='<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js').catch(function(){})}</script></body></html>';
+ var blob=new Blob([out],{type:"application/msword;charset=utf-8"}),url=URL.createObjectURL(blob),el=document.createElement("a");el.href=url;el.download=currentProject.replace(/[^a-z0-9äöõüšž -]/gi,"_")+"_eksperthinnang.doc";document.body.appendChild(el);el.click();setTimeout(function(){URL.revokeObjectURL(url);el.remove()},2000)
 }
-function backup(){var a=defects.filter(function(x){return x.project===currentProject});var blob=new Blob([JSON.stringify({project:currentProject,defects:a},null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),el=document.createElement("a");el.href=url;el.download="garantii_"+currentProject+".json";document.body.appendChild(el);el.click();setTimeout(function(){URL.revokeObjectURL(url);el.remove()},1500)}
+function backup(){var a=defects.filter(function(x){return x.project===currentProject});var meta={};try{meta=JSON.parse(localStorage.getItem("gu_meta_"+currentProject)||"{}")}catch(e){} var blob=new Blob([JSON.stringify({project:currentProject,meta:meta,defects:a},null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),el=document.createElement("a");el.href=url;el.download="garantii_"+currentProject+".json";document.body.appendChild(el);el.click();setTimeout(function(){URL.revokeObjectURL(url);el.remove()},1500)}
 $("newProjectBtn").onclick=newProject;$("projectSearch").oninput=renderProjects;$("backBtn").onclick=showHome;$("photoBtn").onclick=function(){$("photoInput").click()};$("photoInput").onchange=loadPhotos;$("saveBtn").onclick=saveDefect;$("wordBtn").onclick=exportWord;$("backupBtn").onclick=backup;
 $("dictateBtn").onclick=function(){var SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){alert("Selles brauseris pole dikteerimist saadaval. Kasuta telefoni klaviatuuri mikrofoni.");return}var r=new SR();r.lang="et-EE";r.interimResults=false;r.onresult=function(e){$("description").value+=($("description").value?" ":"")+e.results[0][0].transcript};r.start()};
 $("closeAnn").onclick=function(){$("annotator").style.display="none"};$("undoBtn").onclick=undo;$("clearBtn").onclick=clearAnn;$("saveAnnBtn").onclick=saveAnn;
@@ -206,5 +259,5 @@ $("canvas").addEventListener("pointerdown",down);$("canvas").addEventListener("p
 openDB().then(function(){return getAll()}).then(function(a){defects=a;renderProjects()}).catch(function(e){console.error(e);alert("Rakenduse andmete avamine ebaõnnestus: "+e.message)});
 })();
 </script>
-</body>
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js').catch(function(){})}</script></body>
 </html>
